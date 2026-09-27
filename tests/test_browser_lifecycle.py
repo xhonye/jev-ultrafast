@@ -88,3 +88,35 @@ def test_successful_initialization_keeps_target_until_close(cdp):
     instance.close()
     instance.close()
     assert cdp.call_args_list.count(call("Target.closeTarget", targetId="owned-tab")) == 1
+
+
+def test_interrupt_during_readiness_wait_closes_owned_target(cdp):
+    respond = cdp.side_effect
+
+    def fail(method, **params):
+        if method == "Runtime.evaluate":
+            raise KeyboardInterrupt
+        return respond(method, **params)
+
+    cdp.side_effect = fail
+    with pytest.raises(KeyboardInterrupt):
+        browser.Browser("https://example.test/")
+    assert cdp.call_args_list[-1] == call("Target.closeTarget", targetId="owned-tab")
+
+
+def test_interrupt_while_closing_preserves_initialization_error(cdp):
+    respond = cdp.side_effect
+    failure = RuntimeError("Navigate failed")
+
+    def fail(method, **params):
+        if method == "Page.navigate":
+            raise failure
+        if method == "Target.closeTarget":
+            raise KeyboardInterrupt
+        return respond(method, **params)
+
+    cdp.side_effect = fail
+    with pytest.raises(RuntimeError) as caught:
+        browser.Browser("https://example.test/")
+    assert caught.value is failure
+    assert len(caught.value.__notes__) == 1
